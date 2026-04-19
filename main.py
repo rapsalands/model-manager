@@ -41,8 +41,8 @@ class LoginDialog(ctk.CTkToplevel):
 
         self.update_idletasks()
         x = (self.winfo_screenwidth() // 2) - 250
-        y = (self.winfo_screenheight() // 2) - 310
-        self.geometry(f'500x620+{x}+{y}')
+        y = (self.winfo_screenheight() // 2) - 320
+        self.geometry(f'500x640+{x}+{y}')
 
         # Card container
         self.card = ctk.CTkFrame(self, corner_radius=20, fg_color=COLOR_CARD, border_width=1, border_color=COLOR_BORDER)
@@ -69,13 +69,28 @@ class LoginDialog(ctk.CTkToplevel):
 
         self.load_settings()
 
-        self.error_label = ctk.CTkLabel(self.card, text="", text_color=COLOR_DANGER, font=ctk.CTkFont(size=12))
-        self.error_label.pack(pady=8)
+        # Focus the first empty field; if all filled, go straight to sudo
+        self.after(100, self._focus_first_empty)
+
+        self.error_label = ctk.CTkLabel(
+            self.card, text="", text_color=COLOR_DANGER,
+            font=ctk.CTkFont(size=12), wraplength=400, justify="center"
+        )
+        self.error_label.pack(pady=(6, 2))
 
         self.connect_btn = ctk.CTkButton(self.card, text="Connect Securely  →", command=self.do_login, height=48, corner_radius=12, font=ctk.CTkFont(size=15, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
         self.connect_btn.pack(pady=(5, 30), padx=35, fill="x")
 
         self.bind('<Return>', lambda event: self.do_login())
+
+    def _focus_first_empty(self):
+        """Place cursor in the first field that has no value."""
+        for entry in [self.host_entry, self.user_entry, self.key_entry, self.sudo_entry]:
+            if not entry.get().strip():
+                entry.focus_set()
+                return
+        # All pre-filled — go to sudo password
+        self.sudo_entry.focus_set()
 
     def get_config_path(self):
         return os.path.expanduser("~/.model_manager_settings.json")
@@ -105,27 +120,32 @@ class LoginDialog(ctk.CTkToplevel):
     def do_login(self):
         host = self.host_entry.get().strip()
         user = self.user_entry.get().strip()
-        key = self.key_entry.get().strip()
-        sudo = self.sudo_entry.get()
-        
-        if not host or not user or not key or not sudo:
-            self.error_label.configure(text="All fields including Sudo Password are required.", text_color=COLOR_DANGER)
+        key  = self.key_entry.get().strip()
+        sudo = self.sudo_entry.get()          # optional
+
+        if not host or not user or not key:
+            self.error_label.configure(text="Host, username and SSH key are required.", text_color=COLOR_DANGER)
+            self._focus_first_empty()
             return
-            
-        self.error_label.configure(text="Authenticating...", text_color=COLOR_INFO)
+
+        self.error_label.configure(text="Connecting...", text_color=COLOR_INFO)
         self.connect_btn.configure(state="disabled", text="Connecting...")
         self.update()
-        
+
         ssh = SSHManager()
-        success, msg = ssh.connect(host, user, key, sudo)
-        
+        success, msg = ssh.connect(host, user, key, sudo or None)
+
         if success:
             self.save_settings(host, user, key)
+            self.master.app_settings["connected_user"] = user
+            self.master.sudo_password = sudo   # may be empty string
             self.on_login_success(ssh)
             self.destroy()
         else:
-            self.error_label.configure(text=f"Error: {msg}", text_color=COLOR_DANGER)
+            short_msg = msg if len(msg) <= 80 else msg[:77] + "..."
+            self.error_label.configure(text=short_msg, text_color=COLOR_DANGER)
             self.connect_btn.configure(state="normal", text="Connect Securely  →")
+            self.sudo_entry.focus_set()
 
 class DashboardTab(ctk.CTkFrame):
     def __init__(self, master, ssh_manager, app):
@@ -134,14 +154,25 @@ class DashboardTab(ctk.CTkFrame):
         self.app = app
         
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.pack(fill="x", pady=(0, 20))
+        header_frame.pack(fill="x", pady=(0, 14))
         
         self.title_label = ctk.CTkLabel(header_frame, text="Active Models", font=ctk.CTkFont(size=28, weight="bold"), text_color=COLOR_TEXT)
         self.title_label.pack(side="left")
         
         self.refresh_btn = ctk.CTkButton(header_frame, text="↻  Refresh", command=self.load_services, width=130, height=40, corner_radius=10, font=ctk.CTkFont(size=13, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
         self.refresh_btn.pack(side="right")
-        
+
+        # GPU Health button — opens metrics popup on click
+        self.vram_btn = ctk.CTkButton(
+            header_frame, text="🖥  GPU Health",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#FFFFFF",
+            fg_color=COLOR_INFO, hover_color=COLOR_INFO_HOVER,
+            corner_radius=8, height=36,
+            command=self._open_gpu_metrics
+        )
+        self.vram_btn.pack(side="right", padx=14)
+
         self.scroll_frame = ctk.CTkScrollableFrame(self, fg_color="transparent", scrollbar_button_color=COLOR_BORDER)
         self.scroll_frame.pack(fill="both", expand=True)
         
@@ -167,21 +198,28 @@ class DashboardTab(ctk.CTkFrame):
         for service, status in services_status.items():
             self.create_service_row(service, status)
 
+    def _open_gpu_metrics(self):
+        GpuMetricsWindow(self, self.ssh)
+
     def create_service_row(self, service, status):
         is_running = status == "Running"
         is_failed = status == "Failed"
 
         card = ctk.CTkFrame(self.scroll_frame, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_BORDER)
-        card.pack(fill="x", pady=8, padx=4, ipadx=5, ipady=12)
+        card.pack(fill="x", pady=8, padx=4)
 
-        # Left accent bar based on status
+        # Inner row with consistent padding on all sides
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(fill="x")
+
+        # Left accent bar
         accent_color = COLOR_SUCCESS if is_running else COLOR_DANGER if is_failed else COLOR_TEXT_DIM
-        bar = ctk.CTkFrame(card, width=4, corner_radius=4, fg_color=accent_color)
-        bar.pack(side="left", fill="y", padx=(10, 0), pady=6)
+        bar = ctk.CTkFrame(inner, width=5, corner_radius=4, fg_color=accent_color)
+        bar.pack(side="left", fill="y", padx=(12, 0), pady=18)
 
-        # Name and type icon
-        info_frame = ctk.CTkFrame(card, fg_color="transparent")
-        info_frame.pack(side="left", padx=15, fill="y", expand=False)
+        # Name + subtitle
+        info_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        info_frame.pack(side="left", padx=18, pady=18)
 
         raw = service.replace("llm_", "").replace(".service", "")
         is_docker = raw.startswith("docker:")
@@ -189,19 +227,18 @@ class DashboardTab(ctk.CTkFrame):
         display_name = icon + "  " + (raw.replace("docker:", ""))
 
         ctk.CTkLabel(info_frame, text=display_name, font=ctk.CTkFont(size=18, weight="bold"), text_color=COLOR_TEXT).pack(anchor="w")
-
         type_label = "Docker Container" if is_docker else "systemd Service"
-        ctk.CTkLabel(info_frame, text=type_label, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(anchor="w")
+        ctk.CTkLabel(info_frame, text=type_label, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(2, 0))
 
         # Status badge
         status_dot = "●" if is_running else "●" if is_failed else "○"
         status_color = COLOR_SUCCESS if is_running else COLOR_DANGER if is_failed else COLOR_TEXT_DIM
         status_text = f"{status_dot}  {status}"
-        ctk.CTkLabel(card, text=status_text, text_color=status_color, font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=20)
+        ctk.CTkLabel(inner, text=status_text, text_color=status_color, font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=20)
 
         # Buttons
-        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
-        btn_frame.pack(side="right", padx=15)
+        btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_frame.pack(side="right", padx=16, pady=14)
 
         btn_h, btn_w, btn_r = 34, 95, 8
         btn_font = ctk.CTkFont(size=12, weight="bold")
@@ -224,7 +261,28 @@ class DashboardTab(ctk.CTkFrame):
         start_btn.configure(command=lambda b=start_btn: self.service_action(service, "start", b))
         start_btn.pack(side="left", padx=4)
 
+        # Logs button — only for systemd services (journalctl)
+        logs_btn = ctk.CTkButton(btn_frame, text="📔  Logs", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color="#2A2040", hover_color="#3A3060", command=lambda: self.open_logs(service))
+        logs_btn.pack(side="left", padx=4)
+
+        if is_running:
+            chat_btn = ctk.CTkButton(btn_frame, text="💬  Chat", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color="#6C5CE7", hover_color="#5A4BD1", command=lambda: self.open_chat(service))
+            chat_btn.pack(side="left", padx=4)
+
     def service_action(self, service, action, btn):
+        if not self.app.is_admin():
+            # Show a temporary warning on the button itself
+            orig = btn.cget("text")
+            orig_color = btn.cget("fg_color")
+            btn.configure(text="⚠  Need Admin Mode", fg_color=COLOR_WARNING,
+                          text_color="#1A1000", state="disabled")
+            self.after(2500, lambda: btn.configure(
+                text=orig, fg_color=orig_color,
+                text_color="#FFFFFF" if action == "start" else "#FFFFFF",
+                state="normal"
+            ))
+            return
+
         original_text = btn.cget("text")
         btn.configure(text=f"⏳  {action.title()}ing...", state="disabled", fg_color=COLOR_BORDER)
         self.update()
@@ -242,7 +300,140 @@ class DashboardTab(ctk.CTkFrame):
 
     def open_editor(self, service):
         EditorWindow(self, self.ssh, service)
+
+    def open_logs(self, service):
+        LogsWindow(self, self.ssh, service)
+
+    def open_chat(self, service):
+        ChatWindow(self, self.ssh, service)
         
+class ChatWindow(ctk.CTkToplevel):
+    """Chat interface that automatically discovers port and API key to talk to local models."""
+
+    def __init__(self, parent, ssh_manager, service):
+        super().__init__(parent)
+        self.ssh = ssh_manager
+        self.service = service
+        self.port = 8080
+        self.api_key = ""
+        self.endpoint = "/v1/chat/completions"
+
+        name = service.replace("llm_", "").replace(".service", "").replace("docker:", "")
+        self.title(f"Chat — {name}")
+        self.configure(fg_color=COLOR_BG_DARK)
+        self.update_idletasks()
+        w, h = 650, 700
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        self.minsize(500, 600)
+
+        hdr = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=0)
+        hdr.pack(fill="x", padx=0, pady=0)
+        ctk.CTkLabel(hdr, text=f"💬  {name}", font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color=COLOR_TEXT).pack(side="left", padx=20, pady=12)
+                     
+        self.status_lbl = ctk.CTkLabel(hdr, text="Discovering configuration...", font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM)
+        self.status_lbl.pack(side="right", padx=20)
+
+        # Chat history
+        self.history = ctk.CTkTextbox(self, font=ctk.CTkFont(size=13), fg_color="#0D0F18", text_color=COLOR_TEXT, state="disabled")
+        self.history.pack(fill="both", expand=True, padx=20, pady=(20, 10))
+
+        # Input area
+        input_frame = ctk.CTkFrame(self, fg_color="transparent")
+        input_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        self.msg_entry = ctk.CTkEntry(input_frame, placeholder_text="Type a message...", height=44, font=ctk.CTkFont(size=13))
+        self.msg_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.msg_entry.bind("<Return>", lambda e: self._send_msg())
+
+        self.send_btn = ctk.CTkButton(input_frame, text="Send", width=80, height=44, font=ctk.CTkFont(size=13, weight="bold"),
+                                      fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER, command=self._send_msg)
+        self.send_btn.pack(side="right")
+        
+        self.msg_entry.focus_set()
+
+        # Start discovery
+        threading.Thread(target=self._discover_config, daemon=True).start()
+
+    def _append_chat(self, sender, text, color=COLOR_TEXT):
+        self.history.configure(state="normal")
+        self.history.insert("end", f"{sender}: ", "bold")
+        self.history.insert("end", f"{text}\n\n")
+        self.history.see("end")
+        self.history.configure(state="disabled")
+
+    def _discover_config(self):
+        import re
+        if self.service.startswith("docker:"):
+            container = self.service.replace("docker:", "")
+            _, out = self.ssh.run_command(f"docker port {container} 2>/dev/null")
+            # e.g., "8080/tcp -> 0.0.0.0:8080"
+            m = re.search(r':(\d+)$', (out or "").strip())
+            if m: self.port = int(m.group(1))
+            self.endpoint = "/api/generate" if "ollama" in container.lower() else "/v1/chat/completions"
+        else:
+            _, out = self.ssh.run_command(f"systemctl show {self.service} --property=ExecStart 2>/dev/null", use_sudo=True)
+            # Find port
+            port_m = re.search(r'--port\s+(\d+)', out or "")
+            if not port_m: port_m = re.search(r'-p\s+(\d+)', out or "")
+            if port_m: self.port = int(port_m.group(1))
+            
+            # Find API Key
+            key_m = re.search(r'--api[_-]key\s+(\S+)', out or "")
+            if key_m: self.api_key = key_m.group(1).strip("'\"")
+
+        status = f"Port: {self.port} | Auth: {'Yes' if self.api_key else 'No'}"
+        self.after(0, lambda: self.status_lbl.configure(text=status, text_color=COLOR_SUCCESS))
+
+    def _send_msg(self):
+        text = self.msg_entry.get().strip()
+        if not text: return
+        
+        self.msg_entry.delete(0, "end")
+        self._append_chat("You", text, COLOR_INFO)
+        self.send_btn.configure(state="disabled")
+        
+        threading.Thread(target=self._do_send, args=(text,), daemon=True).start()
+
+    def _do_send(self, text):
+        import json
+        safe_text = json.dumps(text) # Automatically escapes quotes correctly
+        
+        if self.endpoint == "/api/generate":
+            payload = f'{{"model": "llama2", "prompt": {safe_text}, "stream": false}}' # basic ollama fallback
+        else:
+            payload = f'{{"messages": [{{"role": "user", "content": {safe_text}}}], "max_tokens": 512}}'
+
+        safe_payload = payload.replace("'", "'\\''")
+        auth_header = f"-H 'Authorization: Bearer {self.api_key}'" if self.api_key else ""
+        
+        cmd = f"curl -s -X POST http://127.0.0.1:{self.port}{self.endpoint} -H 'Content-Type: application/json' {auth_header} -d '{safe_payload}'"
+        _, out = self.ssh.run_command(cmd)
+        
+        self.after(0, lambda: self._handle_reply(out))
+
+    def _handle_reply(self, out):
+        self.send_btn.configure(state="normal")
+        if not out:
+            self._append_chat("System", "Error: No response or connection refused.", COLOR_DANGER)
+            return
+            
+        import json
+        try:
+            data = json.loads(out)
+            if "choices" in data and len(data["choices"]) > 0:
+                reply = data["choices"][0]["message"]["content"]
+            elif "response" in data: # Ollama
+                reply = data["response"]
+            elif "content" in data:
+                reply = data["content"]
+            else:
+                reply = json.dumps(data, indent=2)
+            self._append_chat("Model", reply.strip())
+        except Exception:
+            self._append_chat("Model (Raw)", out.strip())
+
 class EditorWindow(ctk.CTkToplevel):
     def __init__(self, parent, ssh_manager, service):
         super().__init__(parent)
@@ -331,6 +522,269 @@ class EditorWindow(ctk.CTkToplevel):
         else:
             print(f"Failed to save: {msg}")
 
+class GpuMetricsWindow(ctk.CTkToplevel):
+    """Popup showing full GPU metrics via nvidia-smi."""
+
+    QUERY_FIELDS = [
+        ("gpu_name",          "GPU Model"),
+        ("driver_version",    "Driver Version"),
+        ("temperature.gpu",   "Temperature (°C)"),
+        ("utilization.gpu",   "GPU Utilization (%)"),
+        ("utilization.memory","Memory Utilization (%)"),
+        ("memory.used",       "VRAM Used (MiB)"),
+        ("memory.free",       "VRAM Free (MiB)"),
+        ("memory.total",      "VRAM Total (MiB)"),
+        ("power.draw",        "Power Draw (W)"),
+        ("power.limit",       "Power Limit (W)"),
+        ("clocks.current.sm", "SM Clock (MHz)"),
+        ("clocks.current.memory", "Memory Clock (MHz)"),
+        ("fan.speed",         "Fan Speed (%)"),
+    ]
+
+    def __init__(self, parent, ssh_manager):
+        super().__init__(parent)
+        self.ssh = ssh_manager
+        self.title("GPU Metrics")
+        self.configure(fg_color=COLOR_BG_DARK)
+        self.update_idletasks()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h = 680, 820
+        self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        self.minsize(560, 620)
+        self.resizable(True, True)
+
+        # Header
+        hdr = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=0)
+        hdr.pack(fill="x")
+        ctk.CTkLabel(hdr, text="🖥  GPU Health Monitor",
+                     font=ctk.CTkFont(size=16, weight="bold"), text_color=COLOR_TEXT
+                     ).pack(side="left", padx=20, pady=14)
+        self.refresh_btn = ctk.CTkButton(
+            hdr, text="↻ Refresh", width=100, height=30,
+            corner_radius=8, font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER,
+            command=self.fetch
+        )
+        self.refresh_btn.pack(side="right", padx=14, pady=10)
+
+        # VRAM bar card
+        bar_card = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=12,
+                                border_width=1, border_color=COLOR_BORDER)
+        bar_card.pack(fill="x", padx=20, pady=(16, 8))
+        self.bar_title = ctk.CTkLabel(bar_card, text="VRAM Usage",
+                                      font=ctk.CTkFont(size=13, weight="bold"),
+                                      text_color=COLOR_TEXT)
+        self.bar_title.pack(pady=(14, 4), padx=20, anchor="w")
+        self.prog_bar = ctk.CTkProgressBar(bar_card, height=16, corner_radius=8,
+                                           progress_color=COLOR_SUCCESS)
+        self.prog_bar.set(0)
+        self.prog_bar.pack(fill="x", padx=20, pady=(0, 6))
+        self.bar_label = ctk.CTkLabel(bar_card, text="— / — MiB",
+                                      font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM)
+        self.bar_label.pack(pady=(0, 12), padx=20, anchor="e")
+
+        # Metrics grid
+        metrics_card = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=12,
+                                    border_width=1, border_color=COLOR_BORDER)
+        metrics_card.pack(fill="both", expand=True, padx=20, pady=(0, 16))
+
+        self.scroll = ctk.CTkScrollableFrame(metrics_card, fg_color="transparent")
+        self.scroll.pack(fill="both", expand=True, padx=4, pady=4)
+        self.scroll.grid_columnconfigure(0, weight=1)
+        self.scroll.grid_columnconfigure(1, weight=1)
+
+        self.metric_values: dict[str, ctk.CTkLabel] = {}
+        for row_i, (_, human) in enumerate(self.QUERY_FIELDS):
+            bg = COLOR_CARD if row_i % 2 == 0 else "#1E2130"
+            ctk.CTkLabel(self.scroll, text=human,
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color=COLOR_TEXT_DIM, anchor="w"
+                         ).grid(row=row_i, column=0, sticky="ew", padx=(12, 4), pady=6)
+            val_lbl = ctk.CTkLabel(self.scroll, text="…",
+                                   font=ctk.CTkFont(size=12),
+                                   text_color=COLOR_TEXT, anchor="e")
+            val_lbl.grid(row=row_i, column=1, sticky="ew", padx=(4, 12), pady=6)
+            self.metric_values[_] = val_lbl
+
+        self.fetch()
+
+    def fetch(self):
+        self.refresh_btn.configure(state="disabled", text="Loading…")
+        threading.Thread(target=self._do_fetch, daemon=True).start()
+
+    def _do_fetch(self):
+        fields = ",".join(k for k, _ in self.QUERY_FIELDS)
+        cmd = f"nvidia-smi --query-gpu={fields} --format=csv,noheader,nounits 2>/dev/null | head -1"
+        _, out = self.ssh.run_command(cmd)
+        self.after(0, lambda: self._render(out.strip() if out else ""))
+
+    def _render(self, raw: str):
+        self.refresh_btn.configure(state="normal", text="↻ Refresh")
+        if not raw:
+            for lbl in self.metric_values.values():
+                lbl.configure(text="N/A", text_color=COLOR_TEXT_DIM)
+            return
+
+        parts = [p.strip() for p in raw.split(",")]
+        for i, (key, _) in enumerate(self.QUERY_FIELDS):
+            val = parts[i] if i < len(parts) else "N/A"
+            lbl = self.metric_values[key]
+
+            # Colour-code specific fields
+            if key == "temperature.gpu":
+                v = float(val) if val.replace(".", "").isdigit() else 0
+                color = COLOR_DANGER if v > 80 else COLOR_WARNING if v > 65 else COLOR_SUCCESS
+                lbl.configure(text=f"{val} °C", text_color=color)
+            elif key == "utilization.gpu":
+                v = float(val) if val.replace(".", "").isdigit() else 0
+                color = COLOR_DANGER if v > 90 else COLOR_WARNING if v > 70 else COLOR_TEXT
+                lbl.configure(text=f"{val} %", text_color=color)
+            elif key in ("memory.used", "memory.free", "memory.total"):
+                lbl.configure(text=f"{val} MiB", text_color=COLOR_TEXT)
+            elif key in ("power.draw", "power.limit"):
+                lbl.configure(text=f"{val} W", text_color=COLOR_TEXT)
+            elif key in ("clocks.current.sm", "clocks.current.memory"):
+                lbl.configure(text=f"{val} MHz", text_color=COLOR_TEXT)
+            elif key == "fan.speed":
+                lbl.configure(text=f"{val} %", text_color=COLOR_TEXT)
+            else:
+                lbl.configure(text=val, text_color=COLOR_TEXT)
+
+        # Update progress bar
+        try:
+            used  = float(self.metric_values["memory.used"].cget("text").replace(" MiB",""))
+            total = float(self.metric_values["memory.total"].cget("text").replace(" MiB",""))
+            pct   = used / total if total else 0
+            bar_color = COLOR_DANGER if pct > 0.85 else COLOR_WARNING if pct > 0.6 else COLOR_SUCCESS
+            self.prog_bar.set(pct)
+            self.prog_bar.configure(progress_color=bar_color)
+            self.bar_label.configure(text=f"{used:.0f} / {total:.0f} MiB  ({pct*100:.1f}%)")
+            self.bar_title.configure(
+                text=f"VRAM Usage",
+                text_color=bar_color
+            )
+        except Exception:
+            pass
+
+class LogsWindow(ctk.CTkToplevel):
+    """Live log viewer — pulls journalctl or docker logs over SSH."""
+
+    def __init__(self, parent, ssh_manager, service):
+        super().__init__(parent)
+        self.ssh = ssh_manager
+        self.service = service
+        self.is_docker = service.startswith("docker:")
+        self._refresh_job = None
+
+        name = service.replace("llm_", "").replace(".service", "").replace("docker:", "")
+        self.title(f"Logs — {name}")
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w = int(sw * 0.75)
+        h = int(sh * 0.75)
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.configure(fg_color=COLOR_BG_DARK)
+        self.minsize(800, 500)
+
+        # Header bar
+        header = ctk.CTkFrame(self, fg_color=COLOR_CARD, corner_radius=0)
+        header.pack(fill="x", padx=0, pady=0)
+
+        ctk.CTkLabel(header, text=f"📋  Logs: {name}", font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color=COLOR_TEXT).pack(side="left", padx=20, pady=12)
+
+        # Line count selector
+        self.line_var = tk.StringVar(value="100")
+        ctk.CTkLabel(header, text="Lines:", font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM).pack(side="left")
+        line_menu = ctk.CTkOptionMenu(header, values=["50", "100", "200", "500"],
+                                      variable=self.line_var, width=80, height=30,
+                                      command=lambda _: self.fetch_logs(),
+                                      fg_color=COLOR_INPUT_BG, button_color=COLOR_ACCENT,
+                                      button_hover_color=COLOR_ACCENT_HOVER)
+        line_menu.pack(side="left", padx=(4, 16), pady=10)
+
+        self.auto_var = tk.BooleanVar(value=False)
+        auto_chk = ctk.CTkCheckBox(header, text="Auto-refresh (10s)", variable=self.auto_var,
+                                   command=self._toggle_auto, font=ctk.CTkFont(size=12),
+                                   text_color=COLOR_TEXT_DIM, fg_color=COLOR_ACCENT,
+                                   hover_color=COLOR_ACCENT_HOVER)
+        auto_chk.pack(side="left", padx=8)
+
+        refresh_btn = ctk.CTkButton(header, text="↻ Refresh", width=100, height=30,
+                                    corner_radius=8, font=ctk.CTkFont(size=12, weight="bold"),
+                                    fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER,
+                                    command=self.fetch_logs)
+        refresh_btn.pack(side="right", padx=12, pady=10)
+
+        copy_btn = ctk.CTkButton(header, text="Copy", width=80, height=30,
+                                 corner_radius=8, font=ctk.CTkFont(size=12),
+                                 fg_color="#2D3045", hover_color="#3D4060",
+                                 command=self.copy_to_clipboard)
+        copy_btn.pack(side="right", padx=4, pady=10)
+
+        # Log text area
+        self.textbox = ctk.CTkTextbox(
+            self, font=ctk.CTkFont(family="Monospace", size=12),
+            fg_color="#0D0F18", text_color="#C8D0E8",
+            corner_radius=0, wrap="none",
+            scrollbar_button_color=COLOR_BORDER
+        )
+        self.textbox.pack(fill="both", expand=True)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.fetch_logs()
+
+    def fetch_logs(self):
+        self.textbox.configure(state="normal")
+        self.textbox.delete("1.0", "end")
+        self.textbox.insert("end", "⏳  Fetching logs...\n")
+        self.textbox.configure(state="disabled")
+        self.update()
+        threading.Thread(target=self._do_fetch, daemon=True).start()
+
+    def _do_fetch(self):
+        n = self.line_var.get()
+        if self.is_docker:
+            container = self.service.split(":")[1]
+            _, out = self.ssh.run_command(f"docker logs --tail {n} {container} 2>&1", use_sudo=True)
+        else:
+            _, out = self.ssh.run_command(
+                f"journalctl -u {self.service} -n {n} --no-pager --output=short-iso 2>&1",
+                use_sudo=True
+            )
+        self.after(0, lambda: self._render(out))
+
+    def _render(self, text):
+        self.textbox.configure(state="normal")
+        self.textbox.delete("1.0", "end")
+        self.textbox.insert("end", text or "(no log output)")
+        self.textbox.see("end")
+        self.textbox.configure(state="disabled")
+
+    def copy_to_clipboard(self):
+        content = self.textbox.get("1.0", "end")
+        self.clipboard_clear()
+        self.clipboard_append(content)
+
+    def _toggle_auto(self):
+        if self.auto_var.get():
+            self._schedule_refresh()
+        elif self._refresh_job:
+            self.after_cancel(self._refresh_job)
+            self._refresh_job = None
+
+    def _schedule_refresh(self):
+        self.fetch_logs()
+        self._refresh_job = self.after(10000, self._schedule_refresh)
+
+    def _on_close(self):
+        if self._refresh_job:
+            self.after_cancel(self._refresh_job)
+        self.destroy()
+
 class AddModelTab(ctk.CTkFrame):
     def __init__(self, master, ssh_manager, app_settings):
         super().__init__(master, fg_color="transparent")
@@ -388,9 +842,9 @@ class AddModelTab(ctk.CTkFrame):
         service_name = f"llm_{safe_name}.service"
         service_path = f"/etc/systemd/system/{service_name}"
         
-        exec_start = self.app_settings.get("default_exec", "/home/sandeep/llama.cpp/build/bin/llama-server")
-        user = self.app_settings.get("default_user", "sandeep")
-        workdir = self.app_settings.get("default_workdir", "/home/sandeep")
+        exec_start = self.app_settings.get("default_exec", f"/home/{self.app_settings.get('connected_user', 'user')}/llama.cpp/build/bin/llama-server")
+        user = self.app_settings.get("default_user", self.app_settings.get("connected_user", "user"))
+        workdir = self.app_settings.get("default_workdir", f"/home/{self.app_settings.get('connected_user', 'user')}")
         
         content = f"""[Unit]
 Description={repo} Llama Server
@@ -458,16 +912,20 @@ class CreateServiceTab(ctk.CTkFrame):
             self.status_label.configure(text="Please fill all fields.", text_color="#E74C3C")
             return
             
-        if not name.startswith("llm_"):
-            name = "llm_" + name
+        prefix = self.app_settings.get("service_prefix", "llm_")
+        install_path = self.app_settings.get("service_install_path", "/etc/systemd/system")
+
+        if not name.startswith(prefix):
+            name = prefix + name
         if not name.endswith(".service"):
             name += ".service"
-            
-        service_path = f"/etc/systemd/system/{name}"
-        
-        exec_start = self.app_settings.get("default_exec", "/home/sandeep/llama.cpp/build/bin/llama-server")
-        user = self.app_settings.get("default_user", "sandeep")
-        workdir = self.app_settings.get("default_workdir", "/home/sandeep")
+
+        service_path = f"{install_path}/{name}"
+
+        _u = self.app_settings.get("connected_user", "user")
+        exec_start = self.app_settings.get("default_exec", f"/home/{_u}/llama.cpp/build/bin/llama-server")
+        user     = self.app_settings.get("default_user",    _u)
+        workdir  = self.app_settings.get("default_workdir", f"/home/{_u}")
         
         content = f"""[Unit]
 Description={alias} Llama Server
@@ -509,8 +967,9 @@ class SettingsTab(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.app = app
 
-        ctk.CTkLabel(self, text="Application Settings", font=ctk.CTkFont(size=26, weight="bold"), text_color=COLOR_TEXT).pack(pady=(0, 5), anchor="w")
-        ctk.CTkLabel(self, text="Configure defaults for service creation and discovery.", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(0, 20))
+        ctk.CTkLabel(self, text="Application Settings", font=ctk.CTkFont(size=26, weight="bold"), text_color=COLOR_TEXT).pack(pady=(0, 4), anchor="w")
+        ctk.CTkLabel(self, text="All defaults are derived from your connected username. Save after making changes.",
+                     font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(0, 16))
 
         card = ctk.CTkFrame(self, corner_radius=16, fg_color=COLOR_CARD, border_width=1, border_color=COLOR_BORDER)
         card.pack(fill="both", expand=True)
@@ -518,41 +977,78 @@ class SettingsTab(ctk.CTkFrame):
         scroll = ctk.CTkScrollableFrame(card, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
-        e = dict(height=44, corner_radius=10, fg_color=COLOR_INPUT_BG, border_color=COLOR_BORDER, border_width=1, text_color=COLOR_TEXT)
+        # Resolve sensible defaults from the connected SSH username
+        s = self.app.app_settings
+        u = s.get("connected_user") or s.get("user", "user")
+        home = f"/home/{u}"
 
-        def add_field(label, attr, default):
-            ctk.CTkLabel(scroll, text=label, font=ctk.CTkFont(size=13, weight="bold"), text_color=COLOR_TEXT_DIM).pack(pady=(20, 4), padx=40, anchor="w")
+        e = dict(height=44, corner_radius=10, fg_color=COLOR_INPUT_BG,
+                 border_color=COLOR_BORDER, border_width=1, text_color=COLOR_TEXT)
+
+        def section(title, subtitle=""):
+            ctk.CTkFrame(scroll, height=1, fg_color=COLOR_BORDER).pack(fill="x", padx=30, pady=(24, 0))
+            row = ctk.CTkFrame(scroll, fg_color="transparent")
+            row.pack(fill="x", padx=30, pady=(10, 0))
+            ctk.CTkLabel(row, text=title, font=ctk.CTkFont(size=15, weight="bold"), text_color=COLOR_TEXT).pack(anchor="w")
+            if subtitle:
+                ctk.CTkLabel(row, text=subtitle, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(2, 0))
+
+        def field(label, attr, default):
+            ctk.CTkLabel(scroll, text=label, font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color=COLOR_TEXT_DIM).pack(pady=(14, 3), padx=40, anchor="w")
             entry = ctk.CTkEntry(scroll, **e)
-            entry.insert(0, self.app.app_settings.get(attr, default))
-            entry.pack(pady=(0, 4), padx=40, fill="x")
+            entry.insert(0, s.get(attr, default))
+            entry.pack(pady=(0, 0), padx=40, fill="x")
             return entry
 
-        self.user_entry     = add_field("Default User (for systemd User=)",      "default_user",     "sandeep")
-        self.workdir_entry  = add_field("Default Working Directory",              "default_workdir",  "/home/sandeep")
-        self.modeldir_entry = add_field("Default Model Download Directory",       "default_model_dir","~/models")
-        self.exec_entry     = add_field("Default ExecStart (llama-server path)",  "default_exec",     "/home/sandeep/llama.cpp/build/bin/llama-server")
-        self.docker_entry   = add_field("Docker Match Keywords (comma separated)","docker_keywords",  "llm_, llama, vllm, ollama, comfy, wan")
+        # ── Section 1: Server Identity
+        section("👤  Server Identity", "User account used in generated systemd unit files.")
+        self.user_entry    = field("Remote Username",         "default_user",    u)
+        self.workdir_entry = field("Default Working Directory", "default_workdir", home)
 
-        self.save_btn = ctk.CTkButton(scroll, text="💾  Save Settings", command=self.save_global_settings, height=48, corner_radius=12, font=ctk.CTkFont(size=14, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
-        self.save_btn.pack(pady=(24, 10), padx=40, fill="x")
+        # ── Section 2: Model Storage
+        section("📂  Model Storage", "Paths on the remote server where models live.")
+        self.modeldir_entry = field("Default Model Download Directory", "default_model_dir", f"{home}/models")
+        self.exec_entry     = field("llama-server Binary Path (ExecStart)", "default_exec",
+                                    f"{home}/llama.cpp/build/bin/llama-server")
+
+        # ── Section 3: Service Management
+        section("⚙️  Service Management", "Controls how systemd service files are named and where they are installed.")
+        self.service_prefix_entry = field("Service Name Prefix",    "service_prefix",       "llm_")
+        self.service_path_entry   = field("Service Install Directory", "service_install_path", "/etc/systemd/system")
+
+        # ── Section 4: Docker Discovery
+        section("🐳  Docker Discovery", "Comma-separated keywords to match against container names/images.")
+        self.docker_entry = field("Match Keywords", "docker_keywords", "llm_, llama, vllm, ollama, comfy, wan")
+
+        ctk.CTkFrame(scroll, height=1, fg_color=COLOR_BORDER).pack(fill="x", padx=30, pady=(24, 0))
+
+        self.save_btn = ctk.CTkButton(
+            scroll, text="💾  Save Settings",
+            command=self.save_global_settings, height=48, corner_radius=12,
+            font=ctk.CTkFont(size=14, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER
+        )
+        self.save_btn.pack(pady=(20, 8), padx=40, fill="x")
 
         self.status_label = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=13))
-        self.status_label.pack(pady=5, padx=40, anchor="w")
+        self.status_label.pack(pady=4, padx=40, anchor="w")
 
     def save_global_settings(self):
-        self.app.app_settings["default_user"] = self.user_entry.get().strip()
-        self.app.app_settings["default_workdir"] = self.workdir_entry.get().strip()
-        self.app.app_settings["default_model_dir"] = self.modeldir_entry.get().strip()
-        self.app.app_settings["default_exec"] = self.exec_entry.get().strip()
-        self.app.app_settings["docker_keywords"] = self.docker_entry.get().strip()
-        
+        self.app.app_settings["default_user"]        = self.user_entry.get().strip()
+        self.app.app_settings["default_workdir"]     = self.workdir_entry.get().strip()
+        self.app.app_settings["default_model_dir"]   = self.modeldir_entry.get().strip()
+        self.app.app_settings["default_exec"]        = self.exec_entry.get().strip()
+        self.app.app_settings["service_prefix"]      = self.service_prefix_entry.get().strip()
+        self.app.app_settings["service_install_path"]= self.service_path_entry.get().strip()
+        self.app.app_settings["docker_keywords"]     = self.docker_entry.get().strip()
+
         config_path = os.path.expanduser("~/.model_manager_settings.json")
         try:
-            with open(config_path, 'w') as f:
-                json.dump(self.app.app_settings, f)
-            self.status_label.configure(text="Settings saved successfully!", text_color="#2ECC71")
-        except Exception as e:
-            self.status_label.configure(text=f"Failed to save: {e}", text_color="#E74C3C")
+            with open(config_path, "w") as f:
+                json.dump(self.app.app_settings, f, indent=2)
+            self.status_label.configure(text="✓ Settings saved.", text_color=COLOR_SUCCESS)
+        except Exception as exc:
+            self.status_label.configure(text=f"Failed: {exc}", text_color=COLOR_DANGER)
 
 class App(ctk.CTk):
     def __init__(self):
@@ -560,11 +1056,15 @@ class App(ctk.CTk):
         self.title("Model Manager")
         self.configure(fg_color=COLOR_BG_DARK)
         self.ssh = None
+        self.sudo_password = ""      # in-memory only, never saved to disk
         self.app_settings = {}
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
         self.withdraw()
         self.login_dialog = LoginDialog(self, self.on_login_success)
+
+    def is_admin(self):
+        return bool(self.sudo_password)
 
     def on_login_success(self, ssh_manager):
         self.ssh = ssh_manager
@@ -584,7 +1084,7 @@ class App(ctk.CTk):
         import tkinter as tk
 
         sw = self.winfo_screenwidth()
-        sidebar_w = max(200, int(sw * 0.25))
+        sidebar_w = max(180, int(sw * 0.20))
 
         # Resizable paned layout: sidebar | content
         self.paned = tk.PanedWindow(
@@ -632,14 +1132,28 @@ class App(ctk.CTk):
             btn.pack(fill="x", padx=10, pady=3)
             self.nav_buttons[key] = btn
 
-        # Spacer + host label
+        # Spacer
         ctk.CTkFrame(self.sidebar_frame, fg_color="transparent").pack(fill="both", expand=True)
+
+        # Switch to Admin / Admin Mode button
+        self.admin_btn = ctk.CTkButton(
+            self.sidebar_frame,
+            text="🔐  Switch to Admin",
+            anchor="w", height=40, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=COLOR_WARNING, hover_color=COLOR_WARNING_HOVER,
+            text_color="#1A1000",
+            command=self.toggle_admin
+        )
+        self.admin_btn.pack(fill="x", padx=10, pady=(0, 6))
+        self._update_admin_btn()
+
         host = self.app_settings.get("host", "")
         ctk.CTkLabel(
             self.sidebar_frame, text=f"●  {host}",
             font=ctk.CTkFont(size=11), text_color=COLOR_SUCCESS,
             wraplength=200, justify="left"
-        ).pack(padx=14, pady=(0, 20), anchor="w")
+        ).pack(padx=14, pady=(0, 16), anchor="w")
 
         # ── Main content ────────────────────────────────────────────────
         self.content_frame = ctk.CTkFrame(
@@ -669,6 +1183,114 @@ class App(ctk.CTk):
         self.frames[name].tkraise()
         if name == "dashboard":
             self.frames[name].load_services()
+
+    def _update_admin_btn(self):
+        if self.is_admin():
+            self.admin_btn.configure(
+                text="🛡  Admin Mode",
+                fg_color=COLOR_SUCCESS, hover_color=COLOR_SUCCESS_HOVER,
+                text_color="#0A2A1F"
+            )
+        else:
+            self.admin_btn.configure(
+                text="🔐  Switch to Admin",
+                fg_color=COLOR_WARNING, hover_color=COLOR_WARNING_HOVER,
+                text_color="#1A1000"
+            )
+
+    def toggle_admin(self):
+        if self.is_admin():
+            # Drop privileges
+            self.sudo_password = ""
+            self._update_admin_btn()
+        else:
+            # Ask for password
+            SudoAuthDialog(self)
+
+
+class SudoAuthDialog(ctk.CTkToplevel):
+    """Small modal to enter sudo password and verify it via SSH."""
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.app = app
+        self.title("Elevate Privileges")
+        self.configure(fg_color=COLOR_BG_DARK)
+        self.resizable(False, False)
+        w, h = 500, 380
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        self.update_idletasks()
+        self.after(100, self.grab_set)   # modal
+
+        card = ctk.CTkFrame(self, corner_radius=16, fg_color=COLOR_CARD,
+                            border_width=1, border_color=COLOR_BORDER)
+        card.pack(fill="both", expand=True, padx=24, pady=24)
+
+        ctk.CTkLabel(card, text="🔐", font=ctk.CTkFont(size=36)).pack(pady=(28, 4))
+        ctk.CTkLabel(card, text="Switch to Admin Mode",
+                     font=ctk.CTkFont(size=18, weight="bold"),
+                     text_color=COLOR_TEXT).pack(pady=(0, 4))
+        ctk.CTkLabel(card, text="Enter the sudo password for this session.\nIt will not be saved to disk.",
+                     font=ctk.CTkFont(size=12), text_color=COLOR_TEXT_DIM,
+                     justify="center").pack(pady=(0, 20))
+
+        self.pwd_entry = ctk.CTkEntry(
+            card, placeholder_text="Sudo password", show="•",
+            height=44, corner_radius=10,
+            fg_color=COLOR_INPUT_BG, border_color=COLOR_BORDER,
+            border_width=1, text_color=COLOR_TEXT
+        )
+        self.pwd_entry.pack(fill="x", padx=28, pady=(0, 8))
+        self.pwd_entry.focus_set()
+
+        self.err_label = ctk.CTkLabel(card, text=" ", font=ctk.CTkFont(size=12),
+                                      text_color=COLOR_DANGER)
+        self.err_label.pack(pady=(0, 8))
+
+        self.auth_btn = ctk.CTkButton(
+            card, text="Authenticate  →",
+            command=self._authenticate, height=44, corner_radius=10,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER
+        )
+        self.auth_btn.pack(fill="x", padx=28, pady=(0, 20))
+
+        self.bind("<Return>", lambda e: self._authenticate())
+
+    def _authenticate(self):
+        pwd = self.pwd_entry.get()
+        if not pwd:
+            self.err_label.configure(text="Password cannot be empty.")
+            return
+        self.auth_btn.configure(state="disabled", text="Verifying...")
+        self.err_label.configure(text=" ")
+        self.update()
+        threading.Thread(target=self._verify, args=(pwd,), daemon=True).start()
+
+    def _verify(self, pwd):
+        # Quick sudo check: echo the token back through sudo
+        ok, out = self.app.ssh.run_command(
+            f"echo '{pwd}' | sudo -S echo sudo_ok 2>/dev/null"
+        )
+        if "sudo_ok" in (out or ""):
+            self.app.sudo_password = pwd
+            self.app.ssh.sudo_password = pwd   # keep SSHManager in sync
+            self.after(0, self._on_success)
+        else:
+            self.after(0, lambda: self._on_fail())
+
+    def _on_success(self):
+        self.app._update_admin_btn()
+        self.destroy()
+
+    def _on_fail(self):
+        self.err_label.configure(text="Incorrect password. Try again.")
+        self.auth_btn.configure(state="normal", text="Authenticate  →")
+        self.pwd_entry.focus_set()
+        # Move cursor to end of text
+        self.pwd_entry.icursor("end")
+
 
 if __name__ == "__main__":
     app = App()

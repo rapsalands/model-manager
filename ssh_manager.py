@@ -22,11 +22,12 @@ class SSHManager:
             self.client.connect(hostname=host, username=username, key_filename=key_path, timeout=5)
             self.connected = True
             
-            # Verify the sudo password actually works
-            success, out = self.run_command("echo sudo_ok", use_sudo=True)
-            if not success or "sudo_ok" not in out:
-                self.disconnect()
-                return False, "SSH Connected, but Sudo password is incorrect or user lacks sudo privileges."
+            # Verify the sudo password actually works only if provided
+            if sudo_password:
+                success, out = self.run_command("echo sudo_ok", use_sudo=True)
+                if not success or "sudo_ok" not in out:
+                    self.disconnect()
+                    return False, "SSH Connected, but Sudo password is incorrect or user lacks sudo privileges."
                 
             return True, "Connected successfully."
         except Exception as e:
