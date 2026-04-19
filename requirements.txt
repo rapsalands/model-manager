@@ -1,0 +1,4 @@
+customtkinter
+paramiko
+pyinstaller
+pytest
