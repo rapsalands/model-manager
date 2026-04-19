@@ -408,7 +408,8 @@ class ChatWindow(ctk.CTkToplevel):
         safe_payload = payload.replace("'", "'\\''")
         auth_header = f"-H 'Authorization: Bearer {self.api_key}'" if self.api_key else ""
         
-        cmd = f"curl -s -X POST http://127.0.0.1:{self.port}{self.endpoint} -H 'Content-Type: application/json' {auth_header} -d '{safe_payload}'"
+        # Add -w to grab HTTP status code on the last line
+        cmd = f"curl -s -w '\\n%{{http_code}}' -X POST http://127.0.0.1:{self.port}{self.endpoint} -H 'Content-Type: application/json' {auth_header} -d '{safe_payload}'"
         _, out = self.ssh.run_command(cmd)
         
         self.after(0, lambda: self._handle_reply(out))
@@ -419,20 +420,60 @@ class ChatWindow(ctk.CTkToplevel):
             self._append_chat("System", "Error: No response or connection refused.", COLOR_DANGER)
             return
             
+        lines = out.strip().split('\n')
+        status_code = lines[-1]
+        body = '\n'.join(lines[:-1])
+
+        if status_code == "503":
+            self._append_chat("System", "503 Service Unavailable: The model is loading into VRAM. Auto-pinging until ready...", COLOR_WARNING)
+            threading.Thread(target=self._wait_for_ready, daemon=True).start()
+            return
+        elif status_code == "000" or not status_code.isdigit():
+            self._append_chat("System", "Error: Connection refused or port not open.", COLOR_DANGER)
+            return
+
+        if not body:
+            self._append_chat("System", f"HTTP {status_code} Error: Empty response.", COLOR_DANGER)
+            return
+
         import json
         try:
-            data = json.loads(out)
+            data = json.loads(body)
             if "choices" in data and len(data["choices"]) > 0:
                 reply = data["choices"][0]["message"]["content"]
             elif "response" in data: # Ollama
                 reply = data["response"]
             elif "content" in data:
                 reply = data["content"]
+            elif "error" in data:
+                err_msg = data['error'].get('message', str(data['error'])) if isinstance(data['error'], dict) else str(data['error'])
+                reply = f"Error: {err_msg}"
             else:
                 reply = json.dumps(data, indent=2)
             self._append_chat("Model", reply.strip())
         except Exception:
-            self._append_chat("Model (Raw)", out.strip())
+            self._append_chat("Model (Raw)", body.strip())
+
+    def _wait_for_ready(self):
+        if getattr(self, '_is_waiting', False):
+            return
+        self._is_waiting = True
+        
+        while self._is_waiting and self.winfo_exists():
+            import time
+            time.sleep(3)
+            auth_header = f"-H 'Authorization: Bearer {self.api_key}'" if self.api_key else ""
+            # Simple GET request to the endpoint to check HTTP status
+            cmd = f"curl -s -o /dev/null -w '%{{http_code}}' http://127.0.0.1:{self.port}{self.endpoint} {auth_header}"
+            _, out = self.ssh.run_command(cmd)
+            code = (out or "").strip()
+            
+            # If we get any valid HTTP response other than 503 or 000, the server is fully up
+            if code.isdigit() and code not in ["503", "000"]:
+                self.after(0, lambda: self._append_chat("System", "✅ The model has finished loading and is ready!", COLOR_SUCCESS))
+                self._is_waiting = False
+                break
+
 
 class EditorWindow(ctk.CTkToplevel):
     def __init__(self, parent, ssh_manager, service):
