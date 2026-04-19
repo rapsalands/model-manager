@@ -4,52 +4,77 @@ from ssh_manager import SSHManager
 from systemd_parser import SystemdParser
 import json
 import os
+import threading
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
+# ── Premium Color Palette ──
+COLOR_BG_DARK = "#0F1117"
+COLOR_CARD = "#1A1D27"
+COLOR_CARD_HOVER = "#22263A"
+COLOR_SIDEBAR = "#141620"
+COLOR_ACCENT = "#6C5CE7"
+COLOR_ACCENT_HOVER = "#5A4BD1"
+COLOR_SUCCESS = "#00D68F"
+COLOR_SUCCESS_HOVER = "#00B87A"
+COLOR_DANGER = "#FF6B6B"
+COLOR_DANGER_HOVER = "#EE5A5A"
+COLOR_WARNING = "#FDCB6E"
+COLOR_WARNING_HOVER = "#E0B050"
+COLOR_INFO = "#74B9FF"
+COLOR_INFO_HOVER = "#5AA0E6"
+COLOR_TEXT = "#E8E8F0"
+COLOR_TEXT_DIM = "#6C7293"
+COLOR_INPUT_BG = "#252836"
+COLOR_BORDER = "#2D3045"
+
 class LoginDialog(ctk.CTkToplevel):
     def __init__(self, parent, on_login_success):
         super().__init__(parent)
-        self.title("Connect to Server")
-        self.geometry("450x550")
+        self.title("Model Manager — Connect")
+        self.geometry("500x620")
+        self.configure(fg_color=COLOR_BG_DARK)
         self.on_login_success = on_login_success
         self.protocol("WM_DELETE_WINDOW", parent.quit)
-        
+        self.resizable(False, False)
+
         self.update_idletasks()
-        width = self.winfo_width()
-        height = self.winfo_height()
-        x = (self.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.winfo_screenheight() // 2) - (height // 2)
-        self.geometry(f'{width}x{height}+{x}+{y}')
+        x = (self.winfo_screenwidth() // 2) - 250
+        y = (self.winfo_screenheight() // 2) - 310
+        self.geometry(f'500x620+{x}+{y}')
 
         # Card container
-        self.card = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray16"))
-        self.card.pack(fill="both", expand=True, padx=40, pady=40)
+        self.card = ctk.CTkFrame(self, corner_radius=20, fg_color=COLOR_CARD, border_width=1, border_color=COLOR_BORDER)
+        self.card.pack(fill="both", expand=True, padx=30, pady=30)
 
-        self.label = ctk.CTkLabel(self.card, text="Model Manager", font=ctk.CTkFont(size=24, weight="bold"))
-        self.label.pack(pady=(30, 20))
+        # Icon / branding
+        ctk.CTkLabel(self.card, text="🧠", font=ctk.CTkFont(size=40)).pack(pady=(30, 5))
+        ctk.CTkLabel(self.card, text="Model Manager", font=ctk.CTkFont(size=26, weight="bold"), text_color=COLOR_TEXT).pack(pady=(0, 5))
+        ctk.CTkLabel(self.card, text="Connect to your GPU server", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(pady=(0, 25))
 
-        self.host_entry = ctk.CTkEntry(self.card, placeholder_text="Host (e.g. 192.168.0.28)", height=40)
-        self.host_entry.pack(pady=10, padx=30, fill="x")
+        entry_kwargs = dict(height=44, corner_radius=10, fg_color=COLOR_INPUT_BG, border_color=COLOR_BORDER, border_width=1, text_color=COLOR_TEXT)
 
-        self.user_entry = ctk.CTkEntry(self.card, placeholder_text="Username", height=40)
-        self.user_entry.pack(pady=10, padx=30, fill="x")
+        self.host_entry = ctk.CTkEntry(self.card, placeholder_text="Host (e.g. 192.168.0.28)", **entry_kwargs)
+        self.host_entry.pack(pady=6, padx=35, fill="x")
 
-        self.key_entry = ctk.CTkEntry(self.card, placeholder_text="Path to SSH Key (~/.ssh/id_rsa)", height=40)
-        self.key_entry.pack(pady=10, padx=30, fill="x")
+        self.user_entry = ctk.CTkEntry(self.card, placeholder_text="Username", **entry_kwargs)
+        self.user_entry.pack(pady=6, padx=35, fill="x")
 
-        self.sudo_entry = ctk.CTkEntry(self.card, placeholder_text="Sudo Password (Required)", show="*", height=40)
-        self.sudo_entry.pack(pady=10, padx=30, fill="x")
+        self.key_entry = ctk.CTkEntry(self.card, placeholder_text="Path to SSH Key (~/.ssh/id_rsa)", **entry_kwargs)
+        self.key_entry.pack(pady=6, padx=35, fill="x")
+
+        self.sudo_entry = ctk.CTkEntry(self.card, placeholder_text="Sudo Password (Required)", show="•", **entry_kwargs)
+        self.sudo_entry.pack(pady=6, padx=35, fill="x")
 
         self.load_settings()
 
-        self.error_label = ctk.CTkLabel(self.card, text="", text_color="#E74C3C", font=ctk.CTkFont(size=12))
-        self.error_label.pack(pady=5)
+        self.error_label = ctk.CTkLabel(self.card, text="", text_color=COLOR_DANGER, font=ctk.CTkFont(size=12))
+        self.error_label.pack(pady=8)
 
-        self.connect_btn = ctk.CTkButton(self.card, text="Connect securely", command=self.do_login, height=45, font=ctk.CTkFont(weight="bold"))
-        self.connect_btn.pack(pady=(10, 30), padx=30, fill="x")
-        
+        self.connect_btn = ctk.CTkButton(self.card, text="Connect Securely  →", command=self.do_login, height=48, corner_radius=12, font=ctk.CTkFont(size=15, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
+        self.connect_btn.pack(pady=(5, 30), padx=35, fill="x")
+
         self.bind('<Return>', lambda event: self.do_login())
 
     def get_config_path(self):
@@ -84,10 +109,11 @@ class LoginDialog(ctk.CTkToplevel):
         sudo = self.sudo_entry.get()
         
         if not host or not user or not key or not sudo:
-            self.error_label.configure(text="Error: All fields (including Sudo Password) are strictly required.", text_color="#E74C3C")
+            self.error_label.configure(text="All fields including Sudo Password are required.", text_color=COLOR_DANGER)
             return
             
-        self.error_label.configure(text="Authenticating...", text_color="white")
+        self.error_label.configure(text="Authenticating...", text_color=COLOR_INFO)
+        self.connect_btn.configure(state="disabled", text="Connecting...")
         self.update()
         
         ssh = SSHManager()
@@ -98,34 +124,36 @@ class LoginDialog(ctk.CTkToplevel):
             self.on_login_success(ssh)
             self.destroy()
         else:
-            self.error_label.configure(text=f"Error: {msg}", text_color="#E74C3C")
+            self.error_label.configure(text=f"Error: {msg}", text_color=COLOR_DANGER)
+            self.connect_btn.configure(state="normal", text="Connect Securely  →")
 
 class DashboardTab(ctk.CTkFrame):
-    def __init__(self, master, ssh_manager):
+    def __init__(self, master, ssh_manager, app):
         super().__init__(master, fg_color="transparent")
         self.ssh = ssh_manager
+        self.app = app
         
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
         header_frame.pack(fill="x", pady=(0, 20))
         
-        self.title_label = ctk.CTkLabel(header_frame, text="Active Models", font=ctk.CTkFont(size=32, weight="bold"))
+        self.title_label = ctk.CTkLabel(header_frame, text="Active Models", font=ctk.CTkFont(size=28, weight="bold"), text_color=COLOR_TEXT)
         self.title_label.pack(side="left")
         
-        self.refresh_btn = ctk.CTkButton(header_frame, text="↻ Refresh", command=self.load_services, width=120, height=40, font=ctk.CTkFont(weight="bold"))
+        self.refresh_btn = ctk.CTkButton(header_frame, text="↻  Refresh", command=self.load_services, width=130, height=40, corner_radius=10, font=ctk.CTkFont(size=13, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
         self.refresh_btn.pack(side="right")
         
-        self.scroll_frame = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll_frame = ctk.CTkScrollableFrame(self, fg_color="transparent", scrollbar_button_color=COLOR_BORDER)
         self.scroll_frame.pack(fill="both", expand=True)
         
     def load_services(self):
         for widget in self.scroll_frame.winfo_children():
             widget.destroy()
             
-        loading = ctk.CTkLabel(self.scroll_frame, text="Scanning for services...", font=ctk.CTkFont(size=16))
+        loading = ctk.CTkLabel(self.scroll_frame, text="⏳  Scanning for services...", font=ctk.CTkFont(size=15), text_color=COLOR_TEXT_DIM)
         loading.pack(pady=40)
         self.update()
         
-        raw_keywords = self.master.app_settings.get("docker_keywords", "llm_, llama, vllm, ollama, comfy, wan")
+        raw_keywords = self.app.app_settings.get("docker_keywords", "llm_, llama, vllm, ollama, comfy, wan")
         keywords = "|".join([k.strip() for k in raw_keywords.split(",") if k.strip()])
         if not keywords: keywords = "llm_|llama"
         
@@ -133,55 +161,74 @@ class DashboardTab(ctk.CTkFrame):
         loading.destroy()
         
         if not services_status:
-            ctk.CTkLabel(self.scroll_frame, text="No model services found.", font=ctk.CTkFont(size=16), text_color="gray").pack(pady=40)
+            ctk.CTkLabel(self.scroll_frame, text="No model services detected on this server.", font=ctk.CTkFont(size=15), text_color=COLOR_TEXT_DIM).pack(pady=60)
             return
             
         for service, status in services_status.items():
             self.create_service_row(service, status)
 
     def create_service_row(self, service, status):
-        card = ctk.CTkFrame(self.scroll_frame, fg_color=("gray85", "gray16"), corner_radius=15)
-        card.pack(fill="x", pady=10, padx=5, ipadx=10, ipady=15)
-        
-        status_color = "#2ECC71" if status == "Running" else "#E74C3C" if status == "Failed" else "#95A5A6"
-        status_icon = "● Running" if status == "Running" else "● Failed" if status == "Failed" else "○ Stopped"
-        
-        display_name = service.replace("llm_", "").replace(".service", "")
-        if display_name.startswith("docker:"):
-            display_name = "🐳 " + display_name.replace("docker:", "")
+        is_running = status == "Running"
+        is_failed = status == "Failed"
+
+        card = ctk.CTkFrame(self.scroll_frame, fg_color=COLOR_CARD, corner_radius=14, border_width=1, border_color=COLOR_BORDER)
+        card.pack(fill="x", pady=8, padx=4, ipadx=5, ipady=12)
+
+        # Left accent bar based on status
+        accent_color = COLOR_SUCCESS if is_running else COLOR_DANGER if is_failed else COLOR_TEXT_DIM
+        bar = ctk.CTkFrame(card, width=4, corner_radius=4, fg_color=accent_color)
+        bar.pack(side="left", fill="y", padx=(10, 0), pady=6)
+
+        # Name and type icon
+        info_frame = ctk.CTkFrame(card, fg_color="transparent")
+        info_frame.pack(side="left", padx=15, fill="y", expand=False)
+
+        raw = service.replace("llm_", "").replace(".service", "")
+        is_docker = raw.startswith("docker:")
+        icon = "🐳" if is_docker else "⚙️"
+        display_name = icon + "  " + (raw.replace("docker:", ""))
+
+        ctk.CTkLabel(info_frame, text=display_name, font=ctk.CTkFont(size=18, weight="bold"), text_color=COLOR_TEXT).pack(anchor="w")
+
+        type_label = "Docker Container" if is_docker else "systemd Service"
+        ctk.CTkLabel(info_frame, text=type_label, font=ctk.CTkFont(size=11), text_color=COLOR_TEXT_DIM).pack(anchor="w")
+
+        # Status badge
+        status_dot = "●" if is_running else "●" if is_failed else "○"
+        status_color = COLOR_SUCCESS if is_running else COLOR_DANGER if is_failed else COLOR_TEXT_DIM
+        status_text = f"{status_dot}  {status}"
+        ctk.CTkLabel(card, text=status_text, text_color=status_color, font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=20)
+
+        # Buttons
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(side="right", padx=15)
+
+        btn_h, btn_w, btn_r = 34, 95, 8
+        btn_font = ctk.CTkFont(size=12, weight="bold")
+
+        if is_docker:
+            edit_btn = ctk.CTkButton(btn_frame, text="Edit Config", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color=COLOR_BORDER, hover_color=COLOR_BORDER, state="disabled", text_color=COLOR_TEXT_DIM)
         else:
-            display_name = "⚙️ " + display_name
-            
-        name_label = ctk.CTkLabel(card, text=display_name, font=ctk.CTkFont(size=20, weight="bold"))
-        name_label.pack(side="left", padx=20)
-        
-        status_badge = ctk.CTkLabel(card, text=status_icon, text_color=status_color, font=ctk.CTkFont(size=14, weight="bold"))
-        status_badge.pack(side="left", padx=10)
-        
-        # Buttons with beautiful colors
-        btn_font = ctk.CTkFont(weight="bold")
-        restart_btn = ctk.CTkButton(card, text="Restart", width=90, height=35, font=btn_font, fg_color="#3498DB", hover_color="#2980B9")
+            edit_btn = ctk.CTkButton(btn_frame, text="✏️  Edit", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color="#2D3045", hover_color="#3D4060", command=lambda: self.open_editor(service))
+        edit_btn.pack(side="left", padx=4)
+
+        restart_btn = ctk.CTkButton(btn_frame, text="🔄  Restart", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color=COLOR_INFO, hover_color=COLOR_INFO_HOVER)
         restart_btn.configure(command=lambda b=restart_btn: self.service_action(service, "restart", b))
-        restart_btn.pack(side="right", padx=10)
-        
-        stop_btn = ctk.CTkButton(card, text="Stop", width=90, height=35, font=btn_font, fg_color="#E74C3C", hover_color="#C0392B")
+        restart_btn.pack(side="left", padx=4)
+
+        stop_btn = ctk.CTkButton(btn_frame, text="⏹️  Stop", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER)
         stop_btn.configure(command=lambda b=stop_btn: self.service_action(service, "stop", b))
-        stop_btn.pack(side="right", padx=10)
-        
-        start_btn = ctk.CTkButton(card, text="Start", width=90, height=35, font=btn_font, fg_color="#2ECC71", hover_color="#27AE60")
+        stop_btn.pack(side="left", padx=4)
+
+        start_btn = ctk.CTkButton(btn_frame, text="▶️  Start", width=btn_w, height=btn_h, corner_radius=btn_r, font=btn_font, fg_color=COLOR_SUCCESS, hover_color=COLOR_SUCCESS_HOVER, text_color="#0A2A1F")
         start_btn.configure(command=lambda b=start_btn: self.service_action(service, "start", b))
-        start_btn.pack(side="right", padx=10)
-        
-        if service.startswith("docker:"):
-            edit_btn = ctk.CTkButton(card, text="Edit Config", width=110, height=35, state="disabled", font=btn_font, fg_color="gray", hover_color="gray")
-        else:
-            edit_btn = ctk.CTkButton(card, text="Edit Config", width=110, height=35, command=lambda: self.open_editor(service), font=btn_font, fg_color="#F39C12", hover_color="#D35400")
-        edit_btn.pack(side="right", padx=10)
+        start_btn.pack(side="left", padx=4)
 
     def service_action(self, service, action, btn):
-        btn.configure(text=f"{action.title()}ing...", state="disabled")
+        original_text = btn.cget("text")
+        btn.configure(text=f"⏳  {action.title()}ing...", state="disabled", fg_color=COLOR_BORDER)
         self.update()
-        
+
         def run_action():
             if action in ["start", "stop", "restart"]:
                 if service.startswith("docker:"):
@@ -190,8 +237,7 @@ class DashboardTab(ctk.CTkFrame):
                 else:
                     self.ssh.run_command(f"systemctl {action} {service}", use_sudo=True)
             self.after(0, self.load_services)
-            
-        import threading
+
         threading.Thread(target=run_action, daemon=True).start()
 
     def open_editor(self, service):
@@ -290,28 +336,29 @@ class AddModelTab(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.ssh = ssh_manager
         self.app_settings = app_settings
-        
-        self.title_label = ctk.CTkLabel(self, text="Download AI Model", font=ctk.CTkFont(size=32, weight="bold"))
-        self.title_label.pack(pady=(0, 20), anchor="w")
-        
-        card = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray16"))
+
+        ctk.CTkLabel(self, text="Download AI Model", font=ctk.CTkFont(size=26, weight="bold"), text_color=COLOR_TEXT).pack(pady=(0, 5), anchor="w")
+        ctk.CTkLabel(self, text="Pull a model from HuggingFace and auto-register it as a service.", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(0, 20))
+
+        card = ctk.CTkFrame(self, corner_radius=16, fg_color=COLOR_CARD, border_width=1, border_color=COLOR_BORDER)
         card.pack(fill="both", expand=True)
-        
-        ctk.CTkLabel(card, text="HuggingFace Repository ID", font=ctk.CTkFont(weight="bold")).pack(pady=(30, 5), padx=40, anchor="w")
-        self.repo_entry = ctk.CTkEntry(card, placeholder_text="e.g. Kbenkhaled/Qwen3.5-35B-A3B-NVFP4", height=40)
-        self.repo_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        ctk.CTkLabel(card, text="Local Destination Directory", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5), padx=40, anchor="w")
-        default_dir = self.app_settings.get("default_model_dir", "~/models")
-        self.dir_entry = ctk.CTkEntry(card, height=40)
-        self.dir_entry.insert(0, default_dir)
-        self.dir_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        self.download_btn = ctk.CTkButton(card, text="Start Download & Auto-Create Service", command=self.start_download, height=45, font=ctk.CTkFont(weight="bold"), fg_color="#3498DB", hover_color="#2980B9")
-        self.download_btn.pack(pady=30, padx=40, fill="x")
-        
-        self.status_label = ctk.CTkLabel(card, text="", font=ctk.CTkFont(size=14))
-        self.status_label.pack(pady=10, padx=40, anchor="w")
+
+        e = dict(height=44, corner_radius=10, fg_color=COLOR_INPUT_BG, border_color=COLOR_BORDER, border_width=1, text_color=COLOR_TEXT)
+
+        ctk.CTkLabel(card, text="HuggingFace Repository ID", font=ctk.CTkFont(size=13, weight="bold"), text_color=COLOR_TEXT_DIM).pack(pady=(30, 4), padx=40, anchor="w")
+        self.repo_entry = ctk.CTkEntry(card, placeholder_text="e.g. Kbenkhaled/Qwen3.5-35B-A3B-NVFP4", **e)
+        self.repo_entry.pack(pady=(0, 16), padx=40, fill="x")
+
+        ctk.CTkLabel(card, text="Local Destination Directory", font=ctk.CTkFont(size=13, weight="bold"), text_color=COLOR_TEXT_DIM).pack(pady=(0, 4), padx=40, anchor="w")
+        self.dir_entry = ctk.CTkEntry(card, **e)
+        self.dir_entry.insert(0, self.app_settings.get("default_model_dir", "~/models"))
+        self.dir_entry.pack(pady=(0, 24), padx=40, fill="x")
+
+        self.download_btn = ctk.CTkButton(card, text="⬇️  Start Download & Auto-Create Service", command=self.start_download, height=48, corner_radius=12, font=ctk.CTkFont(size=14, weight="bold"), fg_color=COLOR_INFO, hover_color=COLOR_INFO_HOVER)
+        self.download_btn.pack(pady=(0, 20), padx=40, fill="x")
+
+        self.status_label = ctk.CTkLabel(card, text="", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM)
+        self.status_label.pack(pady=5, padx=40, anchor="w")
         
     def start_download(self):
         repo = self.repo_entry.get().strip()
@@ -377,27 +424,27 @@ class CreateServiceTab(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.ssh = ssh_manager
         self.app_settings = app_settings
-        
-        self.title_label = ctk.CTkLabel(self, text="Register Existing Model", font=ctk.CTkFont(size=32, weight="bold"))
-        self.title_label.pack(pady=(0, 20), anchor="w")
-        
-        card = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray16"))
+
+        ctk.CTkLabel(self, text="Register Existing Model", font=ctk.CTkFont(size=26, weight="bold"), text_color=COLOR_TEXT).pack(pady=(0, 5), anchor="w")
+        ctk.CTkLabel(self, text="Create a systemd service for a model already on the server.", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(0, 20))
+
+        card = ctk.CTkFrame(self, corner_radius=16, fg_color=COLOR_CARD, border_width=1, border_color=COLOR_BORDER)
         card.pack(fill="both", expand=True)
-        
+
         self._add_input(card, "Service Name", "name_entry", "e.g. qwen-fast")
         self._add_input(card, "Absolute Model Path", "path_entry", "e.g. /home/sandeep/models/qwen.gguf")
         self._add_input(card, "Server Port", "port_entry", "e.g. 30005")
         self._add_input(card, "Model Alias", "alias_entry", "e.g. qwen-test")
-        
-        self.create_btn = ctk.CTkButton(card, text="Register & Start Service", command=self.create_service, height=45, font=ctk.CTkFont(weight="bold"), fg_color="#3498DB", hover_color="#2980B9")
-        self.create_btn.pack(pady=30, padx=40, fill="x")
-        
-        self.status_label = ctk.CTkLabel(card, text="", font=ctk.CTkFont(size=14))
-        self.status_label.pack(pady=10, padx=40, anchor="w")
+
+        self.create_btn = ctk.CTkButton(card, text="➕  Register & Start Service", command=self.create_service, height=48, corner_radius=12, font=ctk.CTkFont(size=14, weight="bold"), fg_color=COLOR_SUCCESS, hover_color=COLOR_SUCCESS_HOVER, text_color="#0A2A1F")
+        self.create_btn.pack(pady=(10, 20), padx=40, fill="x")
+
+        self.status_label = ctk.CTkLabel(card, text="", font=ctk.CTkFont(size=13))
+        self.status_label.pack(pady=5, padx=40, anchor="w")
 
     def _add_input(self, parent, label, attr_name, placeholder):
-        ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(weight="bold")).pack(pady=(20, 5), padx=40, anchor="w")
-        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, height=40)
+        ctk.CTkLabel(parent, text=label, font=ctk.CTkFont(size=13, weight="bold"), text_color=COLOR_TEXT_DIM).pack(pady=(20, 4), padx=40, anchor="w")
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, height=44, corner_radius=10, fg_color=COLOR_INPUT_BG, border_color=COLOR_BORDER, border_width=1, text_color=COLOR_TEXT)
         entry.pack(pady=(0, 0), padx=40, fill="x")
         setattr(self, attr_name, entry)
 
@@ -461,43 +508,36 @@ class SettingsTab(ctk.CTkFrame):
     def __init__(self, master, app):
         super().__init__(master, fg_color="transparent")
         self.app = app
-        
-        self.title_label = ctk.CTkLabel(self, text="Application Settings", font=ctk.CTkFont(size=32, weight="bold"))
-        self.title_label.pack(pady=(0, 20), anchor="w")
-        
-        card = ctk.CTkFrame(self, corner_radius=15, fg_color=("gray85", "gray16"))
+
+        ctk.CTkLabel(self, text="Application Settings", font=ctk.CTkFont(size=26, weight="bold"), text_color=COLOR_TEXT).pack(pady=(0, 5), anchor="w")
+        ctk.CTkLabel(self, text="Configure defaults for service creation and discovery.", font=ctk.CTkFont(size=13), text_color=COLOR_TEXT_DIM).pack(anchor="w", pady=(0, 20))
+
+        card = ctk.CTkFrame(self, corner_radius=16, fg_color=COLOR_CARD, border_width=1, border_color=COLOR_BORDER)
         card.pack(fill="both", expand=True)
-        
-        ctk.CTkLabel(card, text="Default User (for systemd User=)", font=ctk.CTkFont(weight="bold")).pack(pady=(30, 5), padx=40, anchor="w")
-        self.user_entry = ctk.CTkEntry(card, height=40)
-        self.user_entry.insert(0, self.app.app_settings.get("default_user", "sandeep"))
-        self.user_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        ctk.CTkLabel(card, text="Default Working Directory", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5), padx=40, anchor="w")
-        self.workdir_entry = ctk.CTkEntry(card, height=40)
-        self.workdir_entry.insert(0, self.app.app_settings.get("default_workdir", "/home/sandeep"))
-        self.workdir_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        ctk.CTkLabel(card, text="Default Model Download Directory", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5), padx=40, anchor="w")
-        self.modeldir_entry = ctk.CTkEntry(card, height=40)
-        self.modeldir_entry.insert(0, self.app.app_settings.get("default_model_dir", "~/models"))
-        self.modeldir_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        ctk.CTkLabel(card, text="Default ExecStart (llama-server path)", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5), padx=40, anchor="w")
-        self.exec_entry = ctk.CTkEntry(card, height=40)
-        self.exec_entry.insert(0, self.app.app_settings.get("default_exec", "/home/sandeep/llama.cpp/build/bin/llama-server"))
-        self.exec_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        ctk.CTkLabel(card, text="Docker Match Keywords (comma separated)", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 5), padx=40, anchor="w")
-        self.docker_entry = ctk.CTkEntry(card, height=40)
-        self.docker_entry.insert(0, self.app.app_settings.get("docker_keywords", "llm_, llama, vllm, ollama, comfy, wan"))
-        self.docker_entry.pack(pady=(0, 20), padx=40, fill="x")
-        
-        self.save_btn = ctk.CTkButton(card, text="Save Settings", command=self.save_global_settings, height=45, font=ctk.CTkFont(weight="bold"), fg_color="#3498DB", hover_color="#2980B9")
-        self.save_btn.pack(pady=30, padx=40, fill="x")
-        
-        self.status_label = ctk.CTkLabel(card, text="", font=ctk.CTkFont(size=14))
-        self.status_label.pack(pady=10, padx=40, anchor="w")
+
+        scroll = ctk.CTkScrollableFrame(card, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=5, pady=5)
+
+        e = dict(height=44, corner_radius=10, fg_color=COLOR_INPUT_BG, border_color=COLOR_BORDER, border_width=1, text_color=COLOR_TEXT)
+
+        def add_field(label, attr, default):
+            ctk.CTkLabel(scroll, text=label, font=ctk.CTkFont(size=13, weight="bold"), text_color=COLOR_TEXT_DIM).pack(pady=(20, 4), padx=40, anchor="w")
+            entry = ctk.CTkEntry(scroll, **e)
+            entry.insert(0, self.app.app_settings.get(attr, default))
+            entry.pack(pady=(0, 4), padx=40, fill="x")
+            return entry
+
+        self.user_entry     = add_field("Default User (for systemd User=)",      "default_user",     "sandeep")
+        self.workdir_entry  = add_field("Default Working Directory",              "default_workdir",  "/home/sandeep")
+        self.modeldir_entry = add_field("Default Model Download Directory",       "default_model_dir","~/models")
+        self.exec_entry     = add_field("Default ExecStart (llama-server path)",  "default_exec",     "/home/sandeep/llama.cpp/build/bin/llama-server")
+        self.docker_entry   = add_field("Docker Match Keywords (comma separated)","docker_keywords",  "llm_, llama, vllm, ollama, comfy, wan")
+
+        self.save_btn = ctk.CTkButton(scroll, text="💾  Save Settings", command=self.save_global_settings, height=48, corner_radius=12, font=ctk.CTkFont(size=14, weight="bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
+        self.save_btn.pack(pady=(24, 10), padx=40, fill="x")
+
+        self.status_label = ctk.CTkLabel(scroll, text="", font=ctk.CTkFont(size=13))
+        self.status_label.pack(pady=5, padx=40, anchor="w")
 
     def save_global_settings(self):
         self.app.app_settings["default_user"] = self.user_entry.get().strip()
@@ -518,69 +558,115 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Model Manager")
+        self.configure(fg_color=COLOR_BG_DARK)
         self.ssh = None
         self.app_settings = {}
-        
-        # Configure layout (1 row, 2 columns)
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
-        
         self.withdraw()
         self.login_dialog = LoginDialog(self, self.on_login_success)
 
     def on_login_success(self, ssh_manager):
         self.ssh = ssh_manager
-        self.geometry("1100x750")
+        self.update_idletasks()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        w = int(sw * 0.80)
+        h = int(sh * 0.80)
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(900, 600)
         self.deiconify()
         self.setup_ui()
 
     def setup_ui(self):
-        # Create Sidebar
-        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0)
-        self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(5, weight=1) # spacer
-        
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="Model Manager", font=ctk.CTkFont(size=22, weight="bold"))
-        self.logo_label.grid(row=0, column=0, padx=20, pady=(30, 30))
-        
-        btn_font = ctk.CTkFont(size=14, weight="bold")
-        
-        self.nav_btn_1 = ctk.CTkButton(self.sidebar_frame, text="Dashboard", font=btn_font, command=lambda: self.select_frame("dashboard"), fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), anchor="w", height=45)
-        self.nav_btn_1.grid(row=1, column=0, padx=20, pady=5, sticky="ew")
-        
-        self.nav_btn_2 = ctk.CTkButton(self.sidebar_frame, text="Download Model", font=btn_font, command=lambda: self.select_frame("download"), fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), anchor="w", height=45)
-        self.nav_btn_2.grid(row=2, column=0, padx=20, pady=5, sticky="ew")
-        
-        self.nav_btn_3 = ctk.CTkButton(self.sidebar_frame, text="Register Service", font=btn_font, command=lambda: self.select_frame("create"), fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), anchor="w", height=45)
-        self.nav_btn_3.grid(row=3, column=0, padx=20, pady=5, sticky="ew")
-        
-        self.nav_btn_4 = ctk.CTkButton(self.sidebar_frame, text="Settings", font=btn_font, command=lambda: self.select_frame("settings"), fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray70", "gray30"), anchor="w", height=45)
-        self.nav_btn_4.grid(row=4, column=0, padx=20, pady=5, sticky="ew")
-        
-        # Frames
+        import tkinter as tk
+
+        sw = self.winfo_screenwidth()
+        sidebar_w = max(200, int(sw * 0.25))
+
+        # Resizable paned layout: sidebar | content
+        self.paned = tk.PanedWindow(
+            self, orient=tk.HORIZONTAL,
+            bg=COLOR_BG_DARK, sashwidth=6,
+            sashrelief="flat", handlesize=0
+        )
+        self.paned.pack(fill="both", expand=True)
+
+        # ── Sidebar
+        self.sidebar_frame = ctk.CTkFrame(
+            self.paned, corner_radius=0, fg_color=COLOR_SIDEBAR
+        )
+        self.paned.add(self.sidebar_frame, minsize=180, width=sidebar_w)
+
+        # Logo
+        ctk.CTkLabel(
+            self.sidebar_frame, text="Model Manager",
+            font=ctk.CTkFont(size=16, weight="bold"), text_color="#FFFFFF"
+        ).pack(pady=(28, 2), padx=20, anchor="w")
+        ctk.CTkLabel(
+            self.sidebar_frame, text="AI Service Dashboard",
+            font=ctk.CTkFont(size=11), text_color="#6C7293"
+        ).pack(pady=(0, 14), padx=20, anchor="w")
+
+        # Divider
+        ctk.CTkFrame(self.sidebar_frame, height=1, fg_color=COLOR_BORDER).pack(fill="x", padx=14, pady=(0, 14))
+
+        nav_items = [
+            ("dashboard", "Dashboard"),
+            ("download",  "Download Model"),
+            ("create",    "Register Service"),
+            ("settings",  "Settings"),
+        ]
+        self.nav_buttons = {}
+        for key, label in nav_items:
+            btn = ctk.CTkButton(
+                self.sidebar_frame, text=label, anchor="w",
+                height=44, corner_radius=8,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                fg_color="transparent", text_color="#BBBBDD",
+                hover_color="#252840",
+                command=lambda k=key: self.select_frame(k)
+            )
+            btn.pack(fill="x", padx=10, pady=3)
+            self.nav_buttons[key] = btn
+
+        # Spacer + host label
+        ctk.CTkFrame(self.sidebar_frame, fg_color="transparent").pack(fill="both", expand=True)
+        host = self.app_settings.get("host", "")
+        ctk.CTkLabel(
+            self.sidebar_frame, text=f"●  {host}",
+            font=ctk.CTkFont(size=11), text_color=COLOR_SUCCESS,
+            wraplength=200, justify="left"
+        ).pack(padx=14, pady=(0, 20), anchor="w")
+
+        # ── Main content ────────────────────────────────────────────────
+        self.content_frame = ctk.CTkFrame(
+            self.paned, corner_radius=0, fg_color=COLOR_BG_DARK
+        )
+        self.paned.add(self.content_frame, minsize=600)
+        self.content_frame.grid_rowconfigure(0, weight=1)
+        self.content_frame.grid_columnconfigure(0, weight=1)
+
         self.frames = {}
-        self.frames["dashboard"] = DashboardTab(self, self.ssh)
-        self.frames["download"] = AddModelTab(self, self.ssh, self.app_settings)
-        self.frames["create"] = CreateServiceTab(self, self.ssh, self.app_settings)
-        self.frames["settings"] = SettingsTab(self, self)
-        
-        # Grid all frames in column 1
+        self.frames["dashboard"] = DashboardTab(self.content_frame, self.ssh, self)
+        self.frames["download"]  = AddModelTab(self.content_frame, self.ssh, self.app_settings)
+        self.frames["create"]    = CreateServiceTab(self.content_frame, self.ssh, self.app_settings)
+        self.frames["settings"]  = SettingsTab(self.content_frame, self)
+
         for frame in self.frames.values():
-            frame.grid(row=0, column=1, sticky="nsew", padx=30, pady=30)
-            
+            frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=30)
+
         self.select_frame("dashboard")
 
     def select_frame(self, name):
-        buttons = {"dashboard": self.nav_btn_1, "download": self.nav_btn_2, "create": self.nav_btn_3, "settings": self.nav_btn_4}
-        for key, btn in buttons.items():
+        for key, btn in self.nav_buttons.items():
             if key == name:
-                btn.configure(fg_color=("gray75", "#2C3E50")) # Highlighted color
+                btn.configure(fg_color=COLOR_ACCENT, text_color=COLOR_TEXT)
             else:
-                btn.configure(fg_color="transparent")
-                
-        # Raise selected frame
+                btn.configure(fg_color="transparent", text_color=COLOR_TEXT_DIM)
         self.frames[name].tkraise()
-        # Refresh dashboard auto if selected
         if name == "dashboard":
             self.frames[name].load_services()
 
