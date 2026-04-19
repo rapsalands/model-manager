@@ -160,13 +160,16 @@ class DashboardTab(ctk.CTkFrame):
         
         # Buttons with beautiful colors
         btn_font = ctk.CTkFont(weight="bold")
-        restart_btn = ctk.CTkButton(card, text="Restart", width=90, height=35, command=lambda: self.service_action(service, "restart"), font=btn_font, fg_color="#3498DB", hover_color="#2980B9")
+        restart_btn = ctk.CTkButton(card, text="Restart", width=90, height=35, font=btn_font, fg_color="#3498DB", hover_color="#2980B9")
+        restart_btn.configure(command=lambda b=restart_btn: self.service_action(service, "restart", b))
         restart_btn.pack(side="right", padx=10)
         
-        stop_btn = ctk.CTkButton(card, text="Stop", width=90, height=35, command=lambda: self.service_action(service, "stop"), font=btn_font, fg_color="#E74C3C", hover_color="#C0392B")
+        stop_btn = ctk.CTkButton(card, text="Stop", width=90, height=35, font=btn_font, fg_color="#E74C3C", hover_color="#C0392B")
+        stop_btn.configure(command=lambda b=stop_btn: self.service_action(service, "stop", b))
         stop_btn.pack(side="right", padx=10)
         
-        start_btn = ctk.CTkButton(card, text="Start", width=90, height=35, command=lambda: self.service_action(service, "start"), font=btn_font, fg_color="#2ECC71", hover_color="#27AE60")
+        start_btn = ctk.CTkButton(card, text="Start", width=90, height=35, font=btn_font, fg_color="#2ECC71", hover_color="#27AE60")
+        start_btn.configure(command=lambda b=start_btn: self.service_action(service, "start", b))
         start_btn.pack(side="right", padx=10)
         
         if service.startswith("docker:"):
@@ -175,14 +178,21 @@ class DashboardTab(ctk.CTkFrame):
             edit_btn = ctk.CTkButton(card, text="Edit Config", width=110, height=35, command=lambda: self.open_editor(service), font=btn_font, fg_color="#F39C12", hover_color="#D35400")
         edit_btn.pack(side="right", padx=10)
 
-    def service_action(self, service, action):
-        if action in ["start", "stop", "restart"]:
-            if service.startswith("docker:"):
-                container = service.split(":")[1]
-                self.ssh.run_command(f"docker {action} {container}", use_sudo=True)
-            else:
-                self.ssh.run_command(f"systemctl {action} {service}", use_sudo=True)
-            self.load_services()
+    def service_action(self, service, action, btn):
+        btn.configure(text=f"{action.title()}ing...", state="disabled")
+        self.update()
+        
+        def run_action():
+            if action in ["start", "stop", "restart"]:
+                if service.startswith("docker:"):
+                    container = service.split(":")[1]
+                    self.ssh.run_command(f"docker {action} {container}", use_sudo=True)
+                else:
+                    self.ssh.run_command(f"systemctl {action} {service}", use_sudo=True)
+            self.after(0, self.load_services)
+            
+        import threading
+        threading.Thread(target=run_action, daemon=True).start()
 
     def open_editor(self, service):
         EditorWindow(self, self.ssh, service)
