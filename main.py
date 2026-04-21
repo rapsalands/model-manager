@@ -5,6 +5,43 @@ from systemd_parser import SystemdParser
 import json
 import os
 import threading
+import re
+
+# --- Linux bindings fix for CTkEntry ---
+_orig_entry_init = ctk.CTkEntry.__init__
+
+def _patched_entry_init(self, *args, **kwargs):
+    _orig_entry_init(self, *args, **kwargs)
+    
+    def select_all(event):
+        event.widget.select_range(0, 'end')
+        event.widget.icursor('end')
+        return 'break'
+        
+    def jump_left(event):
+        idx = event.widget.index("insert")
+        txt = event.widget.get()[:idx]
+        matches = list(re.finditer(r'\b\w+\b|\s+', txt))
+        new_idx = matches[-2].start() if len(matches) > 1 else 0
+        event.widget.icursor(new_idx)
+        return 'break'
+        
+    def jump_right(event):
+        idx = event.widget.index("insert")
+        txt = event.widget.get()[idx:]
+        matches = list(re.finditer(r'\b\w+\b|\s+', txt))
+        new_idx = idx + (matches[1].end() if len(matches) > 1 else len(txt))
+        event.widget.icursor(new_idx)
+        return 'break'
+        
+    self.bind('<Control-a>', select_all)
+    self.bind('<Control-A>', select_all)
+    self.bind('<Control-Left>', jump_left)
+    self.bind('<Control-Right>', jump_right)
+
+ctk.CTkEntry.__init__ = _patched_entry_init
+# ---------------------------------------
+
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
@@ -693,17 +730,25 @@ class GpuMetricsWindow(ctk.CTkToplevel):
 
         # Update progress bar
         try:
-            used  = float(self.metric_values["memory.used"].cget("text").replace(" MiB",""))
-            total = float(self.metric_values["memory.total"].cget("text").replace(" MiB",""))
-            pct   = used / total if total else 0
-            bar_color = COLOR_DANGER if pct > 0.85 else COLOR_WARNING if pct > 0.6 else COLOR_SUCCESS
-            self.prog_bar.set(pct)
-            self.prog_bar.configure(progress_color=bar_color)
-            self.bar_label.configure(text=f"{used:.0f} / {total:.0f} MiB  ({pct*100:.1f}%)")
-            self.bar_title.configure(
-                text=f"VRAM Usage",
-                text_color=bar_color
-            )
+            used_txt = self.metric_values["memory.used"].cget("text")
+            total_txt = self.metric_values["memory.total"].cget("text")
+            if "N/A" in used_txt or "N/A" in total_txt:
+                self.prog_bar.set(0)
+                self.prog_bar.configure(progress_color=COLOR_BORDER)
+                self.bar_label.configure(text="Data Unavailable")
+                self.bar_title.configure(text="VRAM Usage", text_color=COLOR_TEXT_DIM)
+            else:
+                used  = float(used_txt.replace(" MiB",""))
+                total = float(total_txt.replace(" MiB",""))
+                pct   = used / total if total else 0
+                bar_color = COLOR_DANGER if pct > 0.85 else COLOR_WARNING if pct > 0.6 else COLOR_SUCCESS
+                self.prog_bar.set(pct)
+                self.prog_bar.configure(progress_color=bar_color)
+                self.bar_label.configure(text=f"{used:.0f} / {total:.0f} MiB  ({pct*100:.1f}%)")
+                self.bar_title.configure(
+                    text=f"VRAM Usage",
+                    text_color=bar_color
+                )
         except Exception:
             pass
 
