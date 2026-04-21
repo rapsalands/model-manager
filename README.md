@@ -13,10 +13,10 @@ You can download the `.deb` package from the [Releases](https://github.com/rapsa
 
 ```bash
 # Download the .deb package
-wget https://github.com/rapsalands/model-manager/releases/download/v1.0.0/model-manager_1.0.0_amd64.deb
+wget https://github.com/rapsalands/model-manager/releases/download/v1.0.1/model-manager_1.0.1_amd64.deb
 
 # Install the package
-sudo dpkg -i model-manager_1.0.0_amd64.deb
+sudo dpkg -i model-manager_1.0.1_amd64.deb
 
 # Run the app from your application menu or terminal
 model-manager
