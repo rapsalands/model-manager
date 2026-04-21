@@ -67,7 +67,7 @@ COLOR_TEXT_DIM = "#6C7293"
 COLOR_INPUT_BG = "#252836"
 COLOR_BORDER = "#2D3045"
 
-APP_VERSION = "v1.0.1"
+APP_VERSION = "v1.1.0"
 
 class LoginDialog(ctk.CTkToplevel):
     def __init__(self, parent, on_login_success):
