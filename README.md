@@ -7,6 +7,21 @@ A standalone Python application to manage `llama.cpp` server models on remote Li
 - **Model Editor**: Edit `llama-server` flags directly from the UI without touching the remote shell.
 - **Model Downloader**: Initiate HuggingFace downloads in detached `tmux` sessions and automatically generate `systemd` service files.
 
+## Installation and Usage
+
+You can download the pre-compiled binary from the [Releases](https://github.com/rapsalands/model-manager/releases) page.
+
+```bash
+# Download the binary
+wget https://github.com/rapsalands/model-manager/releases/download/v1.0.0/model-manager
+
+# Make it executable
+chmod +x model-manager
+
+# Run the app
+./model-manager
+```
+
 ## Development
 
 ```bash
@@ -24,6 +39,5 @@ python main.py
 To build a standalone executable for distribution:
 ```bash
 pip install pyinstaller
-pyinstaller --noconfirm --onedir --windowed --add-data "/path/to/customtkinter:customtkinter/" main.py
+pyinstaller model_manager.spec
 ```
-*(Note: PyInstaller requires pointing to the customtkinter module data path on your system)*
