@@ -9,18 +9,19 @@ A standalone Python application to manage `llama.cpp` server models on remote Li
 
 ## Installation and Usage
 
-You can download the pre-compiled binary from the [Releases](https://github.com/rapsalands/model-manager/releases) page.
+You can download the `.deb` package from the [Releases](https://github.com/rapsalands/model-manager/releases) page.
 
 ```bash
-# Download the binary
-wget https://github.com/rapsalands/model-manager/releases/download/v1.0.0/model-manager
+# Download the .deb package
+wget https://github.com/rapsalands/model-manager/releases/download/v1.0.0/model-manager_1.0.0_amd64.deb
 
-# Make it executable
-chmod +x model-manager
+# Install the package
+sudo dpkg -i model-manager_1.0.0_amd64.deb
 
-# Run the app
-./model-manager
+# Run the app from your application menu or terminal
+model-manager
 ```
+
 
 ## Development
 
