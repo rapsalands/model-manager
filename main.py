@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import re
+import urllib.request
 
 # --- Linux bindings fix for CTkEntry ---
 _orig_entry_init = ctk.CTkEntry.__init__
@@ -65,6 +66,8 @@ COLOR_TEXT = "#E8E8F0"
 COLOR_TEXT_DIM = "#6C7293"
 COLOR_INPUT_BG = "#252836"
 COLOR_BORDER = "#2D3045"
+
+APP_VERSION = "v1.0.1"
 
 class LoginDialog(ctk.CTkToplevel):
     def __init__(self, parent, on_login_success):
@@ -1234,6 +1237,18 @@ class App(ctk.CTk):
         self.admin_btn.pack(fill="x", padx=10, pady=(0, 6))
         self._update_admin_btn()
 
+        self.update_btn = ctk.CTkButton(
+            self.sidebar_frame,
+            text="⬇️  Update Available",
+            anchor="w", height=40, corner_radius=8,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=COLOR_SUCCESS, hover_color=COLOR_SUCCESS_HOVER,
+            text_color="#0A2A1F",
+            command=self.open_releases_page
+        )
+        
+        self.check_for_updates()
+
         host = self.app_settings.get("host", "")
         ctk.CTkLabel(
             self.sidebar_frame, text=f"●  {host}",
@@ -1259,6 +1274,28 @@ class App(ctk.CTk):
             frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=30)
 
         self.select_frame("dashboard")
+
+    def check_for_updates(self):
+        def _check():
+            try:
+                req = urllib.request.Request(
+                    "https://api.github.com/repos/rapsalands/model-manager/releases/latest",
+                    headers={"User-Agent": "ModelManagerApp"}
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode())
+                    latest = data.get("tag_name", "")
+                    v_lat = [int(x) for x in latest.lstrip("v").split(".") if x.isdigit()]
+                    v_cur = [int(x) for x in APP_VERSION.lstrip("v").split(".") if x.isdigit()]
+                    if v_lat > v_cur:
+                        self.after(0, lambda: self.update_btn.pack(fill="x", padx=10, pady=(0, 6), before=self.admin_btn))
+            except Exception:
+                pass
+        threading.Thread(target=_check, daemon=True).start()
+
+    def open_releases_page(self):
+        import webbrowser
+        webbrowser.open("https://github.com/rapsalands/model-manager/releases")
 
     def select_frame(self, name):
         for key, btn in self.nav_buttons.items():
